@@ -3,7 +3,7 @@
 Plugin Name: Rest API DB
 Description: A plugin to create a secure REST API for a rest_table.
 Version: 1.0
-Author: Fattahkarimzo
+Author: Fattahkarimz
 */
 
 // Create a custom database table
