@@ -36,18 +36,74 @@ function generate_random_token() {
 // Create REST API endpoints with token authentication
 add_action('rest_api_init', 'custom_database_api_register_routes');
 function custom_database_api_register_routes() {
+	/*
     register_rest_route('custom-database-api/v1', '/data/', array(
         'methods'  => 'POST',
         'callback' => 'custom_database_api_post_data',
         'permission_callback' => 'custom_database_api_check_token',
     ));
+	*/
 
     register_rest_route('custom-database-api/v1', '/refresh-data/', array(
         'methods'  => 'GET',
         'callback' => 'custom_database_api_refresh_data',
         'permission_callback' => 'custom_database_api_check_token',
     ));
+	
+////***** addition *****////
+    register_rest_route('custom-database-api/v1', '/get-data', array(
+        'methods'  => 'GET',
+        'callback' => 'custom_database_api_get_data',
+        'permission_callback' => 'custom_database_api_check_token',        
+		'args' => array(  //'passport' parameter to the 'get-data' endpoint
+            'token' => array(
+                'required' => true,
+                'validate_callback' => function($param, $request, $key) {
+                    return is_string($param);
+                }
+            ),
+            'passport' => array(
+                'validate_callback' => function($param, $request, $key) {
+                    return is_string($param);
+                }
+            ),
+        ),
+    ));
+} // <<-- this line not included
+
+// Modify the callback function for the 'get-data' endpoint to handle 'passport' parameter
+function custom_database_api_get_data($data) {
+    // Retrieve data from the rest_table using the passport parameter
+    $passport = isset($data['passport']) ? sanitize_text_field($data['passport']) : '';
+
+    global $wpdb;
+    $table_rest = $wpdb->prefix . 'rest_table';
+    if ($passport) {
+        $prepare = $wpdb->prepare("SELECT * FROM $table_rest WHERE passport = %s ORDER BY com_date DESC;", $passport);
+    } else {
+        $prepare = $wpdb->prepare("SELECT * FROM $table_rest ORDER BY com_date DESC;");
+    }
+    
+    $json = $wpdb->get_results( $prepare );
+
+    return rest_ensure_response($json);
 }
+
+// function custom_database_api_get_data(){
+	
+// 	global $wpdb;
+//     $per_page = 10;
+//     $current_page = max(1, isset($_GET['paged']) ? intval($_GET['paged']) : 1);
+//     $offset = ($current_page - 1) * $per_page;
+//     $table_rest = $wpdb->prefix . 'rest_table';
+//     $json = $wpdb->get_results("SELECT * FROM $table_rest ORDER BY com_date DESC;");
+	
+//     return rest_ensure_response(
+// 		$json
+//     );
+// }
+////***** end addition *****////
+
 
 // Check if the token is valid
 function custom_database_api_check_token() {
@@ -74,22 +130,13 @@ function custom_database_api_post_data($data) {
         return new WP_Error('no_data_to_post', 'No data available to post.', array('status' => 404));
     }
 
-    // Insert data into the rest_table
-    $wpdb->insert(
-        $table_rest,
-        array(
-            'passport' => $data_to_post->passport,
-            'educor_id' => $data_to_post->educor_id,
-            'fullname' => $data_to_post->fullname,
-            'com_date' => $data_to_post->com_date,
-        ),
-        array('%s', '%s', '%s', '%s')
-    );
+    // Insert data into the rest_table only if it does not exist
+    custom_database_api_insert_single_data($data_to_post);
 
     return rest_ensure_response(array('message' => 'Data posted successfully.'));
 }
 
-// // Define the callback function for refreshing data
+// Define the callback function for refreshing data
 function custom_database_api_refresh_data() {
     global $wpdb;
     $table_civil = $wpdb->prefix . 'civilized_table';
@@ -125,6 +172,29 @@ function custom_database_api_refresh_data() {
     return rest_ensure_response(array('message' => 'Data refreshed successfully.'));
 }
 
+// Function to insert a single data into rest_table
+function custom_database_api_insert_single_data($data) {
+    global $wpdb;
+    $table_rest = $wpdb->prefix . 'rest_table';
+
+    // Check if the record already exists in rest_table
+    $exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_rest WHERE passport = %s", $data->passport));
+
+    if ($exists == 0) {
+        // Insert the data if it does not exist
+        $wpdb->insert(
+            $table_rest,
+            array(
+                'passport' => $data->passport,
+                'educor_id' => $data->educor_id,
+                'fullname' => $data->fullname,
+                'com_date' => $data->com_date
+            ),
+            array('%s', '%s', '%s', '%s')
+        );
+    }
+}
+
 // Function to insert data into rest_table
 function custom_database_api_insert_data() {
     global $wpdb;
@@ -148,29 +218,13 @@ function custom_database_api_insert_data() {
     }
 
     foreach ($data_to_insert as $data) {
-        // Check if the record already exists in rest_table
-        $exists = $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table_rest WHERE passport = %s", $data['passport']));
-
-        if ($exists == 0) {
-            // Insert the data if it does not exist
-            $wpdb->insert(
-                $table_rest,
-                array(
-                    'passport' => $data['passport'],
-                    'educor_id' => $data['educor_id'],
-                    'fullname' => $data['fullname'],
-                    'com_date' => $data['com_date']
-                ),
-                array('%s', '%s', '%s', '%s')
-            );
-        }
+        // Insert each record individually
+        custom_database_api_insert_single_data((object)$data);
     }
 
     // Log the completion of the insert process
     error_log('Data insertion process completed.');
 }
-
-
 
 // Initialize the plugin and set up the token on activation
 function custom_database_api_init() {
@@ -223,7 +277,7 @@ function custom_database_api_setting_page() {
             <div id="rest-table" class="tab-content">
                 <h3>Endpoint URL for External Access</h3>
                 <p>Use the following URL to access the REST API endpoint:</p>
-                <code><?php echo home_url('/wp-json/custom-database-api/v1/data/'); ?></code>
+                <code><?php echo home_url('/wp-json/custom-database-api/v1/get-data?token={generated-token}[&passport={passport-no}]'); ?></code>
                 <hr>
                 <h3>Rest Table Data</h3>
                 <table class="widefat">
